@@ -22,117 +22,117 @@ module RSpec::Puppet
           Puppet[:modulepath],
           'manifests',
           klass_name.split('::')[1..-1]
-        ].flatten)
+          ].flatten)
         import_str = [
           "import '#{Puppet[:modulepath]}/manifests/init.pp'",
           "import '#{path_to_manifest}.pp'",
           '',
-        ].join("\n")
-      elsif File.exists?(Puppet[:modulepath])
-        import_str = "import '#{Puppet[:manifest]}'\n"
-      else
-        import_str = ""
-      end
-
-      import_str
-    end
-
-    def test_manifest(type)
-      klass_name = self.class.top_level_description.downcase
-
-      if type == :class
-        if !self.respond_to?(:params) || params == {}
-          "include #{klass_name}"
+          ].join("\n")
+        elsif File.exists?(Puppet[:modulepath])
+          import_str = "import '#{Puppet[:manifest]}'\n"
         else
-          "class { '#{klass_name}': #{param_str} }"
+          import_str = ""
         end
-      elsif type == :define
-        if self.respond_to? :params
-          "#{klass_name} { '#{title}': #{param_str} }"
+
+        import_str
+      end
+
+      def test_manifest(type)
+        klass_name = self.class.top_level_description.downcase
+
+        if type == :class
+          if !self.respond_to?(:params) || params == {}
+            "include #{klass_name}"
+          else
+            "class { '#{klass_name}': #{param_str} }"
+          end
+        elsif type == :define
+          if self.respond_to? :params
+            "#{klass_name} { '#{title}': #{param_str} }"
+          else
+            "#{klass_name} { '#{title}': }"
+          end
+        elsif type == :host
+          ""
+        end
+      end
+
+      def nodename(type)
+        if [:class, :define, :function].include? type
+          self.respond_to?(:node) ? node : Puppet[:certname]
         else
-          "#{klass_name} { '#{title}': }"
+          self.class.top_level_description.downcase
         end
-      elsif type == :host
-        ""
       end
-    end
-
-    def nodename(type)
-      if [:class, :define, :function].include? type
-        self.respond_to?(:node) ? node : Puppet[:certname]
-      else
-        self.class.top_level_description.downcase
-      end
-    end
 
 
-    def pre_cond
-      if self.respond_to?(:pre_condition) && !pre_condition.nil?
-        if pre_condition.is_a? Array
-          pre_condition.join("\n")
+      def pre_cond
+        if self.respond_to?(:pre_condition) && !pre_condition.nil?
+          if pre_condition.is_a? Array
+            pre_condition.join("\n")
+          else
+            pre_condition
+          end
         else
-          pre_condition
-        end
-      else
-        ''
-      end
-    end
-
-    def facts_hash(node)
-      facts_val = {
-        'hostname' => node.split('.').first,
-        'fqdn'     => node,
-        'domain'   => node.split('.', 2).last,
-      }
-
-      if RSpec.configuration.default_facts.any?
-        facts_val.merge!(munge_facts(RSpec.configuration.default_facts))
-      end
-
-      facts_val.merge!(munge_facts(facts)) if self.respond_to?(:facts)
-      facts_val
-    end
-
-    def param_str
-      params.keys.map do |r|
-        param_val = escape_special_chars(params[r].inspect)
-        "#{r.to_s} => #{param_val}"
-      end.join(', ')
-    end
-
-    def setup_puppet
-      vardir = Dir.mktmpdir
-      Puppet[:vardir] = vardir
-
-      [
-        [:modulepath, :module_path],
-        [:manifestdir, :manifest_dir],
-        [:manifest, :manifest],
-        [:templatedir, :template_dir],
-        [:config, :config],
-        [:confdir, :confdir],
-        [:hiera_config, :hiera_config],
-      ].each do |a, b|
-        value = self.respond_to?(b) ? self.send(b) : RSpec.configuration.send(b)
-        begin
-          Puppet[a] = value
-        rescue ArgumentError
-          Puppet.settings.setdefaults(:main, {a => {:default => value, :desc => a.to_s}})
+          ''
         end
       end
 
-      Puppet[:libdir] = Dir["#{Puppet[:modulepath]}/*/lib"].entries.join(File::PATH_SEPARATOR)
-      vardir
-    end
+      def facts_hash(node)
+        facts_val = {
+          'hostname' => node.split('.').first,
+          'fqdn'     => node,
+          'domain'   => node.split('.', 2).last,
+        }
 
-    def build_catalog_without_cache(nodename, facts_val, code)
-      Puppet[:code] = code
+        if RSpec.configuration.default_facts.any?
+          facts_val.merge!(munge_facts(RSpec.configuration.default_facts))
+        end
 
-      stub_facts! facts_val
+        facts_val.merge!(munge_facts(facts)) if self.respond_to?(:facts)
+        facts_val
+      end
 
-      node_obj = Puppet::Node.new(nodename)
+      def param_str
+        params.keys.map do |r|
+          param_val = escape_special_chars(params[r].inspect)
+          "#{r.to_s} => #{param_val}"
+        end.join(', ')
+      end
 
-      node_obj.merge(facts_val)
+      def setup_puppet
+        vardir = Dir.mktmpdir
+        Puppet[:vardir] = vardir
+
+        [
+          [:modulepath, :module_path],
+          [:manifestdir, :manifest_dir],
+          [:manifest, :manifest],
+          [:templatedir, :template_dir],
+          [:config, :config],
+          [:confdir, :confdir],
+          [:hiera_config, :hiera_config],
+          ].each do |a, b|
+            if Puppet[a]
+              if self.respond_to? b
+                Puppet[a] = self.send(b)
+              else
+                Puppet[a] = RSpec.configuration.send(b)
+              end
+            end
+
+            Puppet[:libdir] = Dir["#{Puppet[:modulepath]}/*/lib"].entries.join(File::PATH_SEPARATOR)
+            vardir
+          end
+
+          def build_catalog_without_cache(nodename, facts_val, code)
+            Puppet[:code] = code
+
+            stub_facts! facts_val
+
+            node_obj = Puppet::Node.new(nodename)
+
+            node_obj.merge(facts_val)
 
       # trying to be compatible with 2.7 as well as 2.6
       if Puppet::Resource::Catalog.respond_to? :find
